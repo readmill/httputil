@@ -2,17 +2,20 @@ package httputil
 
 import (
 	"fmt"
+	"html"
 	"log"
 	"net"
 	"net/http"
 	"runtime/debug"
+	"strconv"
 	"time"
 )
 
+const CommonLogFmt = `%s - - [%s] "%s %s %s" %d %d "%s" "%s" %d`
+
 var (
-	CommonLogFmt = `%s - - [%s] "%s %s %s" %d %d "%s" "%s" %dms`
-	LogFmt       = CommonLogFmt
-	notify       = []chan *Access{}
+	LogFmt = CommonLogFmt
+	notify = []chan *Access{}
 )
 
 func Notify(ch chan *Access) {
@@ -47,28 +50,34 @@ func (a *Access) String() string {
 }
 
 type baseHandler struct {
-	inner http.Handler
+	inner       http.Handler
+	contentType string
 }
 
-type responseWriter struct {
-	StatusCode int
-	inner      http.ResponseWriter
+func NewHandler(inner http.Handler, ctype string) http.Handler {
+	return &baseHandler{inner, ctype}
 }
 
-func (rw *responseWriter) HasStatus() bool {
+type ResponseWriter struct {
+	StatusCode  int
+	ContentType string
+	inner       http.ResponseWriter
+}
+
+func (rw *ResponseWriter) HasStatus() bool {
 	return rw.StatusCode != 0
 }
 
-func (rw *responseWriter) WriteHeader(status int) {
+func (rw *ResponseWriter) WriteHeader(status int) {
 	rw.StatusCode = status
 	rw.inner.WriteHeader(status)
 }
 
-func (rw *responseWriter) Write(b []byte) (int, error) {
+func (rw *ResponseWriter) Write(b []byte) (int, error) {
 	return rw.inner.Write(b)
 }
 
-func (rw *responseWriter) Header() http.Header {
+func (rw *ResponseWriter) Header() http.Header {
 	return rw.inner.Header()
 }
 
@@ -116,7 +125,8 @@ func logRequest(r *http.Request, statusCode int, delta time.Duration) {
 func (h *baseHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var delta time.Duration
 
-	rw := &responseWriter{inner: w}
+	rw := &ResponseWriter{inner: w, ContentType: h.contentType}
+	rw.Header().Set("Content-Type", h.contentType)
 
 	defer func() {
 		if e := recover(); e != nil {
@@ -124,7 +134,7 @@ func (h *baseHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				rw.WriteHeader(http.StatusInternalServerError)
 			}
 			log.Printf("panic: %v", e)
-			log.Println(debug.Stack())
+			debug.PrintStack()
 		}
 		if rw.HasStatus() {
 			logRequest(r, rw.StatusCode, delta)
@@ -136,6 +146,22 @@ func (h *baseHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	t := time.Now()
 	h.inner.ServeHTTP(rw, r)
 	delta = time.Since(t)
+}
+
+func Error(w http.ResponseWriter, err string, code int) {
+	if rw, ok := w.(*ResponseWriter); ok {
+		switch rw.ContentType {
+		case "application/json":
+			err = fmt.Sprintf(`{"error":%s}`, strconv.QuoteToASCII(err))
+		case "text/html":
+			err = html.EscapeString(err)
+		case "text/plain":
+			fallthrough
+		default:
+			err = "error: " + err
+		}
+	}
+	http.Error(w, err, code)
 }
 
 func init() {
