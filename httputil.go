@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"runtime/debug"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -49,13 +50,26 @@ func (a *Access) String() string {
 		a.Duration/time.Millisecond)
 }
 
-type baseHandler struct {
+type Handler struct {
 	inner       http.Handler
 	contentType string
+	accept      string
+	allow       []string
 }
 
-func NewHandler(inner http.Handler, ctype string) http.Handler {
-	return &baseHandler{inner, ctype}
+func (h *Handler) Accept(ctype string) {
+	h.accept = ctype
+}
+
+func (h *Handler) Allow(methods ...string) {
+	h.allow = methods
+}
+
+func NewHandler(inner http.Handler, ctype string) *Handler {
+	return &Handler{
+		inner:       inner,
+		contentType: ctype,
+	}
 }
 
 type ResponseWriter struct {
@@ -122,7 +136,7 @@ func logRequest(r *http.Request, statusCode int, delta time.Duration) {
 	}
 }
 
-func (h *baseHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var delta time.Duration
 
 	rw := &ResponseWriter{inner: w, ContentType: h.contentType}
@@ -144,8 +158,34 @@ func (h *baseHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	t := time.Now()
-	h.inner.ServeHTTP(rw, r)
+	h.serveRequest(rw, r)
 	delta = time.Since(t)
+}
+
+func (h *Handler) serveRequest(w http.ResponseWriter, r *http.Request) {
+	ctype := r.Header.Get("Content-Type")
+	if ctype != "" && h.accept != "" && ctype != h.accept {
+		w.Header().Set("Accept", h.accept)
+		w.WriteHeader(http.StatusNotAcceptable)
+		return
+	}
+
+	if h.allow != nil {
+		allowed := false
+
+		for _, m := range h.allow {
+			if r.Method == m {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			w.Header().Set("Allow", strings.Join(h.allow, ", "))
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+	}
+	h.inner.ServeHTTP(w, r)
 }
 
 func Error(w http.ResponseWriter, err string, code int) {
