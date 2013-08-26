@@ -1,3 +1,6 @@
+// Package httputil provides utility functions as well as its own
+// http.Handler to complement the "net/http" and "net/http/httputil"
+// packages found in the standard library.
 package httputil
 
 import (
@@ -12,17 +15,21 @@ import (
 	"time"
 )
 
+// Common Log Format
+// See <http://httpd.apache.org/docs/1.3/logs.html#common>
 const CommonLogFmt = `%s - - [%s] "%s %s %s" %d %d "%s" "%s" %d`
 
 var (
-	LogFmt = CommonLogFmt
+	LogFmt = CommonLogFmt // Log format to use
 	notify = []chan *Access{}
 )
 
+// Notify sends all HTTP access events to the specified channel.
 func Notify(ch chan *Access) {
 	notify = append(notify, ch)
 }
 
+// Access represents a single HTTP access event (an answered request).
 type Access struct {
 	RemoteAddr    string
 	Time          time.Time
@@ -34,8 +41,11 @@ type Access struct {
 	Referer       string
 	UserAgent     string
 	Duration      time.Duration
+	Request       *http.Request
 }
 
+// String returns the string representation of an *Access according
+// to LogFmt.
 func (a *Access) String() string {
 	return fmt.Sprintf(LogFmt,
 		a.RemoteAddr,
@@ -50,6 +60,7 @@ func (a *Access) String() string {
 		a.Duration/time.Millisecond)
 }
 
+// Handler implements http.Handler.
 type Handler struct {
 	inner       http.Handler
 	contentType string
@@ -57,14 +68,7 @@ type Handler struct {
 	allow       []string
 }
 
-func (h *Handler) Accept(ctype string) {
-	h.accept = ctype
-}
-
-func (h *Handler) Allow(methods ...string) {
-	h.allow = methods
-}
-
+// NewHandler returns a new Handler which wraps the given http.Handler.
 func NewHandler(inner http.Handler, ctype string) *Handler {
 	return &Handler{
 		inner:       inner,
@@ -72,27 +76,71 @@ func NewHandler(inner http.Handler, ctype string) *Handler {
 	}
 }
 
+// Accept instructs the handler to only fulfill requests
+// which have an Accept header of the given MIME type.
+// Otherwise, a 406 Not Acceptable is returned.
+func (h *Handler) Accept(mime string) {
+	h.accept = mime
+}
+
+// Allow instructs the handler to only fulfill requests
+// which use one of the given HTTP methods.
+// Otherwise, a 405 Method Not Allowed is returned.
+func (h *Handler) Allow(methods ...string) {
+	h.allow = methods
+}
+
+// ResponseWriter wraps an http.ResponseWriter with
+// additional capabilities.
 type ResponseWriter struct {
 	StatusCode  int
 	ContentType string
 	inner       http.ResponseWriter
 }
 
+// HasStatus returns whether or not the ResponseWriter has
+// a status.
 func (rw *ResponseWriter) HasStatus() bool {
 	return rw.StatusCode != 0
 }
 
+// WriteHeader wraps (*http.ResponseWriter).WriteHeader and
+// records the given status.
 func (rw *ResponseWriter) WriteHeader(status int) {
 	rw.StatusCode = status
 	rw.inner.WriteHeader(status)
 }
 
+// Write wraps (*http.ResponseWriter).Write.
 func (rw *ResponseWriter) Write(b []byte) (int, error) {
 	return rw.inner.Write(b)
 }
 
+// Write wraps (*http.ResponseWriter).Header.
 func (rw *ResponseWriter) Header() http.Header {
 	return rw.inner.Header()
+}
+
+// Error wraps http.Error by writing appropriate error messages
+// depending on the handler's Content-Type.
+//
+// For example, with the Content-Type set to application/json
+// and the error string "oops!", the response body would be
+// `{"error":"oops!"}`
+func Error(w http.ResponseWriter, err string, code int) {
+	if rw, ok := w.(*ResponseWriter); ok {
+		switch rw.ContentType {
+		case "application/json":
+			err = fmt.Sprintf(`{"error":%s}`, strconv.QuoteToASCII(err))
+		case "text/html":
+			err = html.EscapeString(err)
+		case "text/plain":
+			fallthrough
+		default:
+			err = "error: " + err
+		}
+	}
+	http.Error(w, err, code)
 }
 
 func logRequest(r *http.Request, statusCode int, delta time.Duration) {
@@ -132,10 +180,13 @@ func logRequest(r *http.Request, statusCode int, delta time.Duration) {
 			referer,
 			userAgent,
 			delta,
+			r,
 		}
 	}
 }
 
+// ServeHTTP serves an HTTP request by calling the underlying http.Handler.
+// Request duration and status are logged.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var delta time.Duration
 
@@ -163,8 +214,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) serveRequest(w http.ResponseWriter, r *http.Request) {
-	ctype := r.Header.Get("Content-Type")
-	if ctype != "" && h.accept != "" && ctype != h.accept {
+	mime := r.Header.Get("Accept")
+	if mime != "" && h.accept != "" && mime != h.accept {
 		w.Header().Set("Accept", h.accept)
 		w.WriteHeader(http.StatusNotAcceptable)
 		return
@@ -186,22 +237,6 @@ func (h *Handler) serveRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	h.inner.ServeHTTP(w, r)
-}
-
-func Error(w http.ResponseWriter, err string, code int) {
-	if rw, ok := w.(*ResponseWriter); ok {
-		switch rw.ContentType {
-		case "application/json":
-			err = fmt.Sprintf(`{"error":%s}`, strconv.QuoteToASCII(err))
-		case "text/html":
-			err = html.EscapeString(err)
-		case "text/plain":
-			fallthrough
-		default:
-			err = "error: " + err
-		}
-	}
-	http.Error(w, err, code)
 }
 
 func init() {
