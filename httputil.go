@@ -215,7 +215,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) serveRequest(w http.ResponseWriter, r *http.Request) {
 	mime := r.Header.Get("Accept")
-	if mime != "" && h.accept != "" && mime != h.accept {
+	if mime != "" && mime != "*/*" && h.accept != "" && mime != h.accept {
 		w.Header().Set("Accept", h.accept)
 		w.WriteHeader(http.StatusNotAcceptable)
 		return
