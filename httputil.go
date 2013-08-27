@@ -1,4 +1,4 @@
-// Package httputil provides utility functions as well as its own
+// Package httputil provides HTTP utility functions as well as its own
 // http.Handler to complement the "net/http" and "net/http/httputil"
 // packages found in the standard library.
 package httputil

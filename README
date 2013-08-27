@@ -1,0 +1,6 @@
+
+httputil is a go library, which provides HTTP utility functions as well as its
+own http.Handler to complement the "net/http" and "net/http/httputil" packages
+found in the standard library.
+
+For more information, see `go doc`.
