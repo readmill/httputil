@@ -131,7 +131,7 @@ func Error(w http.ResponseWriter, err string, code int) {
 	if rw, ok := w.(*ResponseWriter); ok {
 		switch rw.ContentType {
 		case "application/json":
-			err = fmt.Sprintf(`{"error":%s}`, strconv.QuoteToASCII(err))
+			err = fmt.Sprintf(`{"error":%s,"status":%d}`, strconv.QuoteToASCII(err), code)
 		case "text/html":
 			err = html.EscapeString(err)
 		case "text/plain":
